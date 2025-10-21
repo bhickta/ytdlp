@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sub_downloader"
+version = "0.1.0"
+description = "A CLI tool to download auto-subtitles from a YouTube channel."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "yt-dlp" 
+]
+
+[project.urls]
+Homepage = "https://github.com/example/sub_downloader" # Placeholder
+
+# This section creates the command-line tool
+[project.scripts]
+sub-downloader = "sub_downloader.main:main"
