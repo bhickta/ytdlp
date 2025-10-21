@@ -15,7 +15,6 @@ class SubtitleDownloader:
         self.output_path = pathlib.Path(config.output_dir)
         self.min_wait = config.min_wait
         self.max_wait = config.max_wait
-        self.log_file = self.output_path / "download_log.json"
         
         self.cookies_from_browser = config.cookies_from_browser
         self.cache_file = pathlib.Path(config.cache_file) if config.cache_file else None
@@ -37,13 +36,6 @@ class SubtitleDownloader:
             encoding='utf-8'
         )
 
-    def _log_entry(self, log_data):
-        try:
-            with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_data) + '\n')
-        except IOError as e:
-            print(f"Warning: Could not write to log file: {e}", file=sys.stderr)
-            
     def _clean_vtt_to_txt(self, vtt_path):
         txt_path = vtt_path.with_suffix('.txt')
         cleaned_lines = []
@@ -70,22 +62,27 @@ class SubtitleDownloader:
         return txt_path
 
     def _load_downloaded_ids(self):
+        """
+        Scans the output directory for downloaded files and extracts
+        video IDs to determine what to skip.
+        """
         downloaded = set()
-        if not self.log_file.exists():
+        if not self.output_path.exists():
             return downloaded
         
-        print(f"Loading log file to find completed downloads...")
-        try:
-            with open(self.log_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                        if entry.get('status') == 'success' and 'video_id' in entry:
-                            downloaded.add(entry['video_id'])
-                    except json.JSONDecodeError:
-                        pass 
-        except IOError as e:
-            print(f"Warning: Could not read log file '{self.log_file}': {e}", file=sys.stderr)
+        print(f"Scanning output directory to find completed downloads...")
+        
+        # Regex: Optionally match "001_" at the start, then capture 11 chars.
+        regex = re.compile(r"^(?:\d+_)?([a-zA-Z0-9_-]{11})_.*")
+
+        for f in self.output_path.iterdir():
+            if not f.is_file():
+                continue
+            
+            match = regex.match(f.name)
+            if match:
+                video_id = match.group(1) # Group 1 is the 11-char ID
+                downloaded.add(video_id)
         
         return downloaded
 
@@ -136,7 +133,6 @@ class SubtitleDownloader:
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr.strip()
             print(f"Error fetching video list: {error_msg}", file=sys.stderr)
-            self._log_entry({"status": "error", "task": "fetch_list", "error": error_msg})
             return []
         except FileNotFoundError:
             print("Error: yt-dlp not found. Make sure it is installed and in your PATH.", file=sys.stderr)
@@ -180,8 +176,6 @@ class SubtitleDownloader:
             if lang in requested_subs:
                 ext = requested_subs[lang].get('ext', 'vtt')
                 
-                # yt-dlp adds its own lang code for auto-subs, creating files like:
-                # "tvRqfMPXFjg_en.temp.en.vtt" (from base "tvRqfMPXFjg_en.temp")
                 temp_file = self.output_path / f"{video_id}_{lang}.temp.{lang}.{ext}"
                 
                 return video_meta, temp_file
@@ -212,10 +206,7 @@ class SubtitleDownloader:
             prefix = str(current_index).zfill(padding)
             base_name = f"{prefix}_{base_name}"
         
-        # --- THIS IS THE FIX ---
         ext = temp_file.suffix # Gets the LAST extension, e.g., ".vtt"
-        # --- END FIX ---
-
         final_name = f"{base_name}.{lang}{ext}"
         
         final_file_path = self.output_path / final_name
@@ -228,8 +219,6 @@ class SubtitleDownloader:
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         print(f"Processing: {video_url}")
         
-        log_data = {"video_id": video_id, "url": video_url}
-        
         for lang in self.lang_prefs:
             print(f"  Attempting to download language: {lang}")
             
@@ -238,8 +227,6 @@ class SubtitleDownloader:
             video_meta, temp_file = self._execute_yt_dlp_for_lang(video_id, lang, temp_template_base)
             
             if video_meta == "fatal_error":
-                log_data.update({"status": "error", "error": "yt-dlp execution failed"})
-                self._log_entry(log_data)
                 return
 
             if video_meta and temp_file and temp_file.exists():
@@ -253,18 +240,9 @@ class SubtitleDownloader:
                         final_name = txt_path.name
                         print(f"    Successfully cleaned to: {final_name}")
                     
-                    log_data.update({
-                        "status": "success",
-                        "subtitle_language": lang,
-                        "metadata": video_meta,
-                        "final_filename": final_name
-                    })
-                    self._log_entry(log_data)
                     return
                 except (OSError, IOError) as e:
                     print(f"    Error: Failed to process file: {e}", file=sys.stderr)
-                    log_data.update({"status": "error", "error": f"File processing failed: {e}"})
-                    self._log_entry(log_data)
                     return
             elif temp_file and not temp_file.exists():
                 print(f"    Error: Temp file '{temp_file}' not found. Cannot rename.")
@@ -272,17 +250,25 @@ class SubtitleDownloader:
                 pass # Already logged 'not available'
         
         print(f"  Warning: No '{','.join(self.lang_prefs)}' subs found for {video_id}.")
-        log_data["status"] = "no_subs_found"
-        self._log_entry(log_data)
 
-    def _process_download_queue(self, videos_to_download, total_videos):
-        total_new = len(videos_to_download)
-        for i, video_id in enumerate(videos_to_download, 1):
-            print(f"\n--- Processing Video {i} of {total_new} ---")
+    def _process_download_queue(self, all_video_ids, downloaded_ids, total_new_videos):
+        """
+        Processes videos, using the global index for numbering and
+        a separate counter for the "X of Y" progress message.
+        """
+        current_new_index = 0
+        total_all_videos = len(all_video_ids) # For padding
+
+        for global_index, video_id in enumerate(all_video_ids, 1):
+            if video_id in downloaded_ids:
+                continue
             
-            self.download_subtitle(video_id, i, total_videos)
+            current_new_index += 1
+            print(f"\n--- Processing Video {current_new_index} of {total_new_videos} (Global Index: {global_index}) ---")
             
-            if i < total_new:
+            self.download_subtitle(video_id, global_index, total_all_videos) 
+            
+            if current_new_index < total_new_videos:
                 wait_time = random.uniform(self.min_wait, self.max_wait)
                 print(f"  Waiting for {wait_time:.2f} seconds...")
                 try:
@@ -292,6 +278,9 @@ class SubtitleDownloader:
                     break
         
     def run(self):
+        """
+        Main execution function.
+        """
         downloaded_ids = self._load_downloaded_ids()
         all_video_ids = self.fetch_video_ids()
         
@@ -311,8 +300,8 @@ class SubtitleDownloader:
             print("All videos have already been processed. Exiting.")
             return
             
-        self._process_download_queue(videos_to_download, total_all)
-        print(f"\nDownload process complete. Log file at: {self.log_file}")
+        self._process_download_queue(all_video_ids, downloaded_ids, total_new)
+        print(f"\nDownload process complete.")
 
 def _parse_args():
     parser = argparse.ArgumentParser(
