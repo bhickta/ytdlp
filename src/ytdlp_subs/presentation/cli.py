@@ -220,6 +220,11 @@ def run_download(config: AppConfig) -> int:
 
     except SubtitleDownloaderError as e:
         console.print(f"\n[bold red]✗ Error:[/bold red] {e.message}", style="red")
+        
+        advice = e.context.get("advice")
+        if advice:
+            console.print(f"\n[bold yellow]💡 Suggestion:[/bold yellow] {advice}")
+
         logger.error("Download failed", error=str(e), context=e.context)
         return 1
 

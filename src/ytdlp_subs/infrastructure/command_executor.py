@@ -120,6 +120,9 @@ class CommandExecutor:
 
             return cmd_result
 
+        except CommandExecutionError:
+            raise
+
         except subprocess.TimeoutExpired as e:
             logger.error("Command timed out", command=" ".join(command), timeout=self.timeout)
             raise CommandExecutionError(

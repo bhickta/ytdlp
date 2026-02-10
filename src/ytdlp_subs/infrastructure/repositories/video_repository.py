@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from ytdlp_subs.domain.exceptions import VideoFetchError
+from ytdlp_subs.domain.exceptions import CommandExecutionError, VideoFetchError
 from ytdlp_subs.domain.models import SubtitleLanguage, VideoId, VideoMetadata
 from ytdlp_subs.domain.repositories import IVideoRepository
 from ytdlp_subs.infrastructure.command_executor import CommandExecutor
@@ -65,6 +65,9 @@ class YtDlpVideoRepository(IVideoRepository):
             )
 
             return metadata
+
+        except CommandExecutionError as e:
+            self._handle_command_error(e, video_id=str(video_id))
 
         except json.JSONDecodeError as e:
             logger.error(
@@ -127,6 +130,9 @@ class YtDlpVideoRepository(IVideoRepository):
 
             return video_ids
 
+        except CommandExecutionError as e:
+            self._handle_command_error(e, channel_url=channel_url)
+
         except ValueError as e:
             logger.error(
                 "Invalid video ID in channel",
@@ -147,6 +153,46 @@ class YtDlpVideoRepository(IVideoRepository):
             raise VideoFetchError(
                 f"Failed to fetch channel videos: {e}",
                 channel_url=channel_url,
+            ) from e
+
+    def _handle_command_error(self, e: CommandExecutionError, **context) -> None:
+        """Handle CommandExecutionError and raise appropriate VideoFetchError."""
+        stderr = e.context.get("stderr", "")
+        
+        if "n challenge solving failed" in stderr:
+            logger.error("yt-dlp n challenge solving failed", stderr=stderr, **context)
+            
+            advice = "Update yt-dlp (`uv pip install -U yt-dlp`) and ensure Node.js is installed."
+            if self.cookies_from_browser:
+                advice += f" Also, try removing --cookies-from-browser as your cookies might be flagged."
+
+            raise VideoFetchError(
+                "yt-dlp failed to solve the 'n' challenge.",
+                advice=advice,
+                **context,
+            ) from e
+            
+        elif "Requested format is not available" in stderr and self.cookies_from_browser:
+            logger.error("yt-dlp format not available (likely cookie issue)", stderr=stderr, **context)
+            raise VideoFetchError(
+                f"yt-dlp failed to fetch formats using cookies from {self.cookies_from_browser}. This often happens when the cookies are invalid or your IP is flagged.",
+                advice=f"Try running without --cookies-from-browser or use a different browser/profile.",
+                **context,
+            ) from e
+            
+        elif "Sign in to confirm your age" in stderr and not self.cookies_from_browser:
+            logger.error("yt-dlp age gate encountered", stderr=stderr, **context)
+            raise VideoFetchError(
+                "Video is age-restricted and requires sign-in.",
+                advice="Use --cookies-from-browser to authenticate.",
+                **context,
+            ) from e
+            
+        else:
+            logger.error("Command execution failed", error=str(e), stderr=stderr, **context)
+            raise VideoFetchError(
+                f"Failed to execute yt-dlp command: {e.message}",
+                **context,
             ) from e
 
     def _build_metadata_command(self, video_url: str) -> list[str]:
