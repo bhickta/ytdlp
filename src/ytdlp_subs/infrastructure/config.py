@@ -83,6 +83,10 @@ class AppConfig(BaseSettings):
         default=None,
         description="Path to log file",
     )
+    error_log: Optional[Path] = Field(
+        default=None,
+        description="Path to record failed videos (CSV format) to skip them next time",
+    )
 
     @field_validator("max_wait_seconds")
     @classmethod

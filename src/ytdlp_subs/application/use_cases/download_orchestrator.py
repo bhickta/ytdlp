@@ -12,7 +12,12 @@ from ytdlp_subs.domain.models import (
     VideoId,
     VideoMetadata,
 )
-from ytdlp_subs.domain.repositories import ICacheRepository, ISubtitleRepository, IVideoRepository
+from ytdlp_subs.domain.repositories import (
+    ICacheRepository,
+    IErrorRepository,
+    ISubtitleRepository,
+    IVideoRepository,
+)
 from ytdlp_subs.domain.services import (
     IFileProcessorService,
     IFilenameGeneratorService,
@@ -36,6 +41,7 @@ class DownloadOrchestrator:
         video_repository: IVideoRepository,
         subtitle_repository: ISubtitleRepository,
         cache_repository: ICacheRepository,
+        error_repository: IErrorRepository,
         subtitle_downloader: ISubtitleDownloaderService,
         file_processor: IFileProcessorService,
         filename_generator: IFilenameGeneratorService,
@@ -53,6 +59,7 @@ class DownloadOrchestrator:
             video_repository: Repository for video data
             subtitle_repository: Repository for subtitle data
             cache_repository: Repository for cache data
+            error_repository: Repository for error tracking
             subtitle_downloader: Service for downloading subtitles
             file_processor: Service for processing files
             filename_generator: Service for generating filenames
@@ -66,6 +73,7 @@ class DownloadOrchestrator:
         self.video_repository = video_repository
         self.subtitle_repository = subtitle_repository
         self.cache_repository = cache_repository
+        self.error_repository = error_repository
         self.subtitle_downloader = subtitle_downloader
         self.file_processor = file_processor
         self.filename_generator = filename_generator
@@ -101,17 +109,19 @@ class DownloadOrchestrator:
                 failed_videos=0,
             )
 
-        # Get already downloaded video IDs
+        # Get already downloaded and failed video IDs
         downloaded_ids = self.subtitle_repository.get_downloaded_video_ids()
+        failed_ids = self.error_repository.get_failed_video_ids()
+        skipped_ids = downloaded_ids | failed_ids
 
-        # Filter out already downloaded videos
-        videos_to_download = [vid for vid in all_video_ids if vid not in downloaded_ids]
+        # Filter out already downloaded and failed videos
+        videos_to_download = [vid for vid in all_video_ids if vid not in skipped_ids]
 
         # Initialize progress
         progress = DownloadProgress(
             total_videos=len(all_video_ids),
             processed_videos=0,
-            skipped_videos=len(downloaded_ids),
+            skipped_videos=len(skipped_ids),
             failed_videos=0,
         )
 
@@ -145,6 +155,11 @@ class DownloadOrchestrator:
                     "Failed to process video",
                     video_id=str(video_id),
                     error=str(e),
+                )
+                self.error_repository.record_error(
+                    video_id=video_id,
+                    error_type=e.__class__.__name__,
+                    error_message=str(e),
                 )
                 progress.failed_videos += 1
 

@@ -129,6 +129,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--error-log",
+        type=Path,
+        help="Path to CSV file to log errors and skip failed videos on future runs",
+    )
+
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -259,6 +265,7 @@ def main() -> NoReturn:
             clean_txt=args.clean_txt,
             log_level=args.log_level,
             log_file=args.log_file,
+            error_log=args.error_log,
         )
     except Exception as e:
         console.print(f"[bold red]✗ Configuration error:[/bold red] {e}", style="red")

@@ -15,6 +15,7 @@ from ytdlp_subs.infrastructure.repositories import (
     FileSystemSubtitleRepository,
     YtDlpVideoRepository,
 )
+from ytdlp_subs.infrastructure.repositories.error_repository import FileErrorRepository
 
 
 class Container:
@@ -41,6 +42,7 @@ class Container:
         self._cache_repository: Optional[FileCacheRepository] = None
         self._video_repository: Optional[YtDlpVideoRepository] = None
         self._subtitle_repository: Optional[FileSystemSubtitleRepository] = None
+        self._error_repository: Optional[FileErrorRepository] = None
 
         # Initialize services
         self._subtitle_downloader: Optional[YtDlpSubtitleDownloader] = None
@@ -64,6 +66,13 @@ class Container:
             cache_file = self.config.get_cache_path()
             self._cache_repository = FileCacheRepository(cache_file=cache_file)
         return self._cache_repository
+
+    @property
+    def error_repository(self) -> FileErrorRepository:
+        """Get or create error repository."""
+        if self._error_repository is None:
+            self._error_repository = FileErrorRepository(error_log_path=self.config.error_log)
+        return self._error_repository
 
     @property
     def video_repository(self) -> YtDlpVideoRepository:
@@ -121,6 +130,7 @@ class Container:
                 video_repository=self.video_repository,
                 subtitle_repository=self.subtitle_repository,
                 cache_repository=self.cache_repository,
+                error_repository=self.error_repository,
                 subtitle_downloader=self.subtitle_downloader,
                 file_processor=self.file_processor,
                 filename_generator=self.filename_generator,

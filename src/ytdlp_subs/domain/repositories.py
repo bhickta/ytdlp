@@ -128,3 +128,29 @@ class ICacheRepository(ABC):
             True if cache exists
         """
         pass
+
+
+class IErrorRepository(ABC):
+    """Interface for error logging and tracking."""
+
+    @abstractmethod
+    def get_failed_video_ids(self) -> set[VideoId]:
+        """
+        Get all video IDs that have failed previously.
+
+        Returns:
+            Set of failed video IDs
+        """
+        pass
+
+    @abstractmethod
+    def record_error(self, video_id: VideoId, error_type: str, error_message: str) -> None:
+        """
+        Record a video processing error.
+
+        Args:
+            video_id: Video identifier
+            error_type: Type/Class of the error
+            error_message: Detailed error message
+        """
+        pass
