@@ -81,6 +81,8 @@ class Container:
             self._video_repository = YtDlpVideoRepository(
                 command_executor=self.command_executor,
                 cookies_from_browser=self.config.cookies_from_browser,
+                js_runtimes=self.config.js_runtimes,
+                remote_components=self.config.remote_components,
             )
         return self._video_repository
 
@@ -100,6 +102,8 @@ class Container:
             self._subtitle_downloader = YtDlpSubtitleDownloader(
                 command_executor=self.command_executor,
                 cookies_from_browser=self.config.cookies_from_browser,
+                js_runtimes=self.config.js_runtimes,
+                remote_components=self.config.remote_components,
             )
         return self._subtitle_downloader
 

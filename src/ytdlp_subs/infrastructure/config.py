@@ -51,6 +51,14 @@ class AppConfig(BaseSettings):
         default=None,
         description="Browser to extract cookies from (e.g., 'chrome', 'firefox')",
     )
+    js_runtimes: str = Field(
+        default="node",
+        description="JS runtimes to use for yt-dlp challenges (e.g., 'node')",
+    )
+    remote_components: str = Field(
+        default="ejs:github",
+        description="Remote components to fetch (e.g., 'ejs:github')",
+    )
 
     # Cache settings
     cache_file: Optional[Path] = Field(
@@ -76,7 +84,7 @@ class AppConfig(BaseSettings):
 
     # Logging
     log_level: str = Field(
-        default="INFO",
+        default="WARNING",
         description="Logging level",
     )
     log_file: Optional[Path] = Field(

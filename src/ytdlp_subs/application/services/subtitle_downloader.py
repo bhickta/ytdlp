@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from ytdlp_subs.domain.exceptions import DownloadError, SubtitleNotFoundError
+from ytdlp_subs.domain.exceptions import CommandExecutionError, DownloadError, SubtitleNotFoundError
 from ytdlp_subs.domain.models import SubtitleFile, SubtitleFormat, SubtitleLanguage, VideoId
 from ytdlp_subs.domain.services import ISubtitleDownloaderService
 from ytdlp_subs.infrastructure.command_executor import CommandExecutor
@@ -21,6 +21,8 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
         self,
         command_executor: CommandExecutor,
         cookies_from_browser: Optional[str] = None,
+        js_runtimes: str = "node",
+        remote_components: str = "ejs:github",
     ) -> None:
         """
         Initialize subtitle downloader.
@@ -28,9 +30,13 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
         Args:
             command_executor: Command executor for running yt-dlp
             cookies_from_browser: Optional browser to extract cookies from
+            js_runtimes: JS runtimes to use for yt-dlp challenges
+            remote_components: Remote components to fetch
         """
         self.command_executor = command_executor
         self.cookies_from_browser = cookies_from_browser
+        self.js_runtimes = js_runtimes
+        self.remote_components = remote_components
 
     def download_subtitle(
         self,
@@ -69,7 +75,20 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
 
         try:
             result = self.command_executor.execute(command, check=True)
+        except CommandExecutionError as e:
+            logger.warning("Main subtitle download command failed. Retrying with Android client fallback...", video_id=str(video_id))
+            fallback_cmd = command[:-1] + ["--extractor-args", "youtube:player_client=android", command[-1]]
+            try:
+                result = self.command_executor.execute(fallback_cmd, check=True)
+            except CommandExecutionError as fallback_e:
+                logger.error("Fallback subtitle download command failed", video_id=str(video_id), error=str(fallback_e))
+                raise DownloadError(
+                    f"Fallback subtitle download failed: {fallback_e.message}",
+                    video_id=str(video_id),
+                    language=language.value,
+                ) from fallback_e
 
+        try:
             # Parse JSON output to get subtitle info
             json_output = result.stdout.strip().split("\n")[-1]
             metadata = json.loads(json_output)
@@ -147,6 +166,19 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
                 language=language.value,
             ) from e
 
+    def _build_base_cmd(self) -> list[str]:
+        """Build the base yt-dlp command with common anti-bot options."""
+        cmd = [
+            "yt-dlp",
+            "--js-runtimes", self.js_runtimes,
+            "--remote-components", self.remote_components,
+        ]
+        
+        if self.cookies_from_browser:
+            cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+            
+        return cmd
+
     def _build_download_command(
         self,
         video_url: str,
@@ -154,8 +186,8 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
         temp_template: str,
     ) -> list[str]:
         """Build yt-dlp command for downloading subtitle."""
-        command = [
-            "yt-dlp",
+        command = self._build_base_cmd()
+        command.extend([
             "--write-auto-sub",
             "--sub-lang",
             language,
@@ -163,10 +195,6 @@ class YtDlpSubtitleDownloader(ISubtitleDownloaderService):
             "--output",
             temp_template,
             "--print-json",
-        ]
-
-        if self.cookies_from_browser:
-            command.extend(["--cookies-from-browser", self.cookies_from_browser])
-
-        command.append(video_url)
+            video_url
+        ])
         return command

@@ -20,6 +20,8 @@ class YtDlpVideoRepository(IVideoRepository):
         self,
         command_executor: CommandExecutor,
         cookies_from_browser: Optional[str] = None,
+        js_runtimes: str = "node",
+        remote_components: str = "ejs:github",
     ) -> None:
         """
         Initialize YT-DLP video repository.
@@ -27,9 +29,13 @@ class YtDlpVideoRepository(IVideoRepository):
         Args:
             command_executor: Command executor for running yt-dlp
             cookies_from_browser: Optional browser to extract cookies from
+            js_runtimes: JS runtimes to use for yt-dlp challenges
+            remote_components: Remote components to fetch
         """
         self.command_executor = command_executor
         self.cookies_from_browser = cookies_from_browser
+        self.js_runtimes = js_runtimes
+        self.remote_components = remote_components
 
     def get_video_metadata(self, video_id: VideoId) -> Optional[VideoMetadata]:
         """
@@ -50,7 +56,16 @@ class YtDlpVideoRepository(IVideoRepository):
 
         try:
             result = self.command_executor.execute(command, check=True)
+        except CommandExecutionError as e:
+            logger.warning("Main yt-dlp command failed. Retrying with Android client fallback...", video_id=str(video_id))
+            fallback_cmd = command[:-1] + ["--extractor-args", "youtube:player_client=android", command[-1]]
+            try:
+                result = self.command_executor.execute(fallback_cmd, check=True)
+            except CommandExecutionError as fallback_e:
+                self._handle_command_error(fallback_e, video_id=str(video_id))
+                raise
 
+        try:
             # Parse JSON output (last line of stdout)
             json_output = result.stdout.strip().split("\n")[-1]
             data = json.loads(json_output)
@@ -65,9 +80,6 @@ class YtDlpVideoRepository(IVideoRepository):
             )
 
             return metadata
-
-        except CommandExecutionError as e:
-            self._handle_command_error(e, video_id=str(video_id))
 
         except json.JSONDecodeError as e:
             logger.error(
@@ -110,7 +122,16 @@ class YtDlpVideoRepository(IVideoRepository):
 
         try:
             result = self.command_executor.execute(command, check=True)
+        except CommandExecutionError as e:
+            logger.warning("Main yt-dlp command failed. Retrying with Android client fallback...", channel_url=channel_url)
+            fallback_cmd = command[:-1] + ["--extractor-args", "youtube:player_client=android", command[-1]]
+            try:
+                result = self.command_executor.execute(fallback_cmd, check=True)
+            except CommandExecutionError as fallback_e:
+                self._handle_command_error(fallback_e, channel_url=channel_url)
+                raise
 
+        try:
             # Each line is a video ID
             video_id_strings = [
                 line.strip() for line in result.stdout.strip().split("\n") if line.strip()
@@ -129,9 +150,6 @@ class YtDlpVideoRepository(IVideoRepository):
             )
 
             return video_ids
-
-        except CommandExecutionError as e:
-            self._handle_command_error(e, channel_url=channel_url)
 
         except ValueError as e:
             logger.error(
@@ -154,6 +172,23 @@ class YtDlpVideoRepository(IVideoRepository):
                 f"Failed to fetch channel videos: {e}",
                 channel_url=channel_url,
             ) from e
+
+    def is_video_url(self, url: str) -> bool:
+        """Check if URL points to a single video instead of a channel/playlist."""
+        return "watch?v=" in url or "youtu.be/" in url
+
+    def _build_base_cmd(self) -> list[str]:
+        """Build the base yt-dlp command with common anti-bot options."""
+        cmd = [
+            "yt-dlp",
+            "--js-runtimes", self.js_runtimes,
+            "--remote-components", self.remote_components,
+        ]
+        
+        if self.cookies_from_browser:
+            cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+            
+        return cmd
 
     def _handle_command_error(self, e: CommandExecutionError, **context) -> None:
         """Handle CommandExecutionError and raise appropriate VideoFetchError."""
@@ -197,31 +232,23 @@ class YtDlpVideoRepository(IVideoRepository):
 
     def _build_metadata_command(self, video_url: str) -> list[str]:
         """Build yt-dlp command for fetching metadata."""
-        command = [
-            "yt-dlp",
+        command = self._build_base_cmd()
+        command.extend([
             "--dump-json",
             "--skip-download",
-        ]
-
-        if self.cookies_from_browser:
-            command.extend(["--cookies-from-browser", self.cookies_from_browser])
-
-        command.append(video_url)
+            video_url
+        ])
         return command
 
     def _build_channel_command(self, channel_url: str) -> list[str]:
         """Build yt-dlp command for fetching channel videos."""
-        command = [
-            "yt-dlp",
-            "--flat-playlist",
-            "--print",
-            "id",
-        ]
-
-        if self.cookies_from_browser:
-            command.extend(["--cookies-from-browser", self.cookies_from_browser])
-
-        command.append(channel_url)
+        command = self._build_base_cmd()
+        
+        if self.is_video_url(channel_url):
+            command.extend(["--print", "id", channel_url])
+        else:
+            command.extend(["--flat-playlist", "--print", "id", channel_url])
+            
         return command
 
     def _parse_metadata(self, data: dict, video_id: VideoId) -> VideoMetadata:

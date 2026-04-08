@@ -91,6 +91,18 @@ Examples:
     )
 
     parser.add_argument(
+        "--js-runtimes",
+        default="node",
+        help="JS runtimes to use for yt-dlp challenges (default: node)",
+    )
+
+    parser.add_argument(
+        "--remote-components",
+        default="ejs:github",
+        help="Remote components to fetch (default: ejs:github)",
+    )
+
+    parser.add_argument(
         "--cache-file",
         type=Path,
         help="Path to cache file for video IDs",
@@ -117,9 +129,9 @@ Examples:
 
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level (default: INFO)",
+        help="Logging level (default: WARNING)",
     )
 
     parser.add_argument(
@@ -259,6 +271,8 @@ def main() -> NoReturn:
             min_wait_seconds=args.min_wait_seconds,
             max_wait_seconds=args.max_wait_seconds,
             cookies_from_browser=args.cookies_from_browser,
+            js_runtimes=args.js_runtimes,
+            remote_components=args.remote_components,
             cache_file=args.cache_file,
             force_refresh=args.force_refresh,
             enable_numbering=args.enable_numbering,
