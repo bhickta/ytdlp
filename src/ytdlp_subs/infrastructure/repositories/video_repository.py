@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from ytdlp_subs.domain.exceptions import CommandExecutionError, VideoFetchError
 from ytdlp_subs.domain.models import SubtitleLanguage, VideoId, VideoMetadata
@@ -175,7 +176,18 @@ class YtDlpVideoRepository(IVideoRepository):
 
     def is_video_url(self, url: str) -> bool:
         """Check if URL points to a single video instead of a channel/playlist."""
-        return "watch?v=" in url or "youtu.be/" in url
+        parsed = urlparse(url)
+        query_params = parse_qs(parsed.query)
+
+        if query_params.get("list"):
+            return False
+
+        hostname = parsed.netloc.lower()
+        return (
+            parsed.path == "/watch"
+            and bool(query_params.get("v"))
+            or hostname in {"youtu.be", "www.youtu.be"}
+        )
 
     def _build_base_cmd(self) -> list[str]:
         """Build the base yt-dlp command with common anti-bot options."""
@@ -245,7 +257,7 @@ class YtDlpVideoRepository(IVideoRepository):
         command = self._build_base_cmd()
         
         if self.is_video_url(channel_url):
-            command.extend(["--print", "id", channel_url])
+            command.extend(["--no-playlist", "--print", "id", channel_url])
         else:
             command.extend(["--flat-playlist", "--print", "id", channel_url])
             
